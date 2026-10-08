@@ -1,14 +1,16 @@
 package net.gaiadesk.e2e;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
+import java.security.spec.NamedParameterSpec;
+import java.security.spec.XECPrivateKeySpec;
+import java.security.spec.XECPublicKeySpec;
 import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -39,9 +41,8 @@ public final class E2eCrypto {
     /** The most file bytes one sealed input frame carries. */
     public static final int INPUT_CHUNK = 48 * 1024;
 
-    // RFC 8410 DER wrappers for a raw X25519 key.
-    private static final byte[] PKCS8_PREFIX = Bytes.hex("302e020100300506032b656e04220420");
-    private static final byte[] SPKI_PREFIX = Bytes.hex("302a300506032b656e032100");
+    /** The field prime of Curve25519, 2^255 - 19. */
+    private static final BigInteger P = BigInteger.ONE.shiftLeft(255).subtract(BigInteger.valueOf(19));
     private static final byte[] BASE_POINT = basePoint();
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -62,13 +63,23 @@ public final class E2eCrypto {
 
     private static byte[] agree(byte[] secret, byte[] pub) throws GeneralSecurityException {
         if (secret.length != 32 || pub.length != 32) throw new IllegalArgumentException("X25519 keys are 32 bytes");
+        // Raw key specs, not PKCS#8/X.509 encodings: Java 11's XDH KeyFactory reads RFC 8410's PKCS#8 private key
+        // (the scalar in a nested OCTET STRING) as a 34-byte key and refuses it ("key length must be 32").
         KeyFactory kf = KeyFactory.getInstance("XDH");
-        PrivateKey priv = kf.generatePrivate(new PKCS8EncodedKeySpec(Bytes.concat(PKCS8_PREFIX, secret)));
-        PublicKey p = kf.generatePublic(new X509EncodedKeySpec(Bytes.concat(SPKI_PREFIX, pub)));
+        PrivateKey priv = kf.generatePrivate(new XECPrivateKeySpec(NamedParameterSpec.X25519, secret.clone()));
+        PublicKey p = kf.generatePublic(new XECPublicKeySpec(NamedParameterSpec.X25519, uCoordinate(pub)));
         KeyAgreement ka = KeyAgreement.getInstance("XDH");
         ka.init(priv);
         ka.doPhase(p, true);
         return ka.generateSecret();
+    }
+
+    /** A public key's u-coordinate (RFC 7748 §5): little-endian, the top bit masked, reduced mod p. */
+    private static BigInteger uCoordinate(byte[] pub) {
+        byte[] be = new byte[32];
+        for (int i = 0; i < 32; i++) be[i] = pub[31 - i];
+        be[0] &= 0x7f;
+        return new BigInteger(1, be).mod(P);
     }
 
     /** The X25519 public key of a 32-byte secret. */

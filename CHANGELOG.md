@@ -37,6 +37,9 @@
   keep-alive connection that closes reaches the server exactly once.
 - A stream ended by a transport error reports its class's kind in
   `Exit.getError()` (`connection_lost`, reason `timeout`, for an idle timeout).
+- End-to-end encryption works on Java 11: X25519 keys are given to the JDK as
+  raw key specs (`XECPrivateKeySpec`/`XECPublicKeySpec`); Java 11's XDH
+  KeyFactory refused the RFC 8410 PKCS#8 encoding ("key length must be 32").
 - Proven on a raw-socket test server: closed or reset before any response
   byte (with and without reading a 4 MiB upload), stalled mid-body, mid-JSON
   and mid-stream, silent, and 300 dropped requests in a row.
