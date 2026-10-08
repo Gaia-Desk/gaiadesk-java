@@ -47,7 +47,10 @@ final class Transports {
             try {
                 return windows ? LocalConnectors.pipe(target) : LocalConnectors.unix(target);
             } catch (IOException e) {
-                throw unavailable(target + ": " + e.getMessage(), e);
+                // Nothing was sent: the connection was never made (a retry may send any method again).
+                java.net.ConnectException never = new java.net.ConnectException(target + ": " + e.getMessage());
+                never.initCause(e);
+                throw unavailable(target + ": " + e.getMessage(), never);
             }
         }, "localhost");
     }

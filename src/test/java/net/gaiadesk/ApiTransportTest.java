@@ -286,9 +286,9 @@ class ApiTransportTest {
         assertEquals(Double.valueOf(7), limited.getRetryAfter());
         long n = statsOf(MockApi.LIMITED_DESK);
         RefusedException waitedTooLong = fails(RefusedException.class,
-                () -> b().retry(RetryPolicy.of(2, Duration.ofMillis(10), Duration.ofSeconds(1))).build().stats(MockApi.LIMITED_DESK));
+                () -> b().retry(RetryPolicy.of(2, Duration.ofMillis(10), Duration.ofSeconds(1), Duration.ofSeconds(1))).build().stats(MockApi.LIMITED_DESK));
         assertEquals("rate_limited", waitedTooLong.getReason());
-        assertEquals(n + 1, statsOf(MockApi.LIMITED_DESK), "a Retry-After longer than maxDelay is not waited for");
+        assertEquals(n + 1, statsOf(MockApi.LIMITED_DESK), "a Retry-After longer than maxRetryWait is not waited for");
         GaiaDesk g = b().retry(RetryPolicy.of(2, Duration.ofMillis(10), Duration.ofMillis(100))).build();
         n = statsOf(MockApi.LIMITED_ONCE_DESK);
         assertEquals(5.0, g.stats(MockApi.LIMITED_ONCE_DESK).getCpuPercent());

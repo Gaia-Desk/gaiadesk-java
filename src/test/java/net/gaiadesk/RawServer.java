@@ -38,21 +38,42 @@ final class RawServer implements AutoCloseable {
         STALL_MID_EVENTS,
         /** Read the request and never answer. */
         SILENT,
+        /** Answer {@link #status} with a JSON error envelope ({@link #reason}, {@link #retryAfter}), then close. */
+        STATUS,
+        /** Answer 200 with {@link #OK_BODY}, keeping the connection open for the next request. */
+        OK,
+        /** Answer a connection's first request 200 (keep-alive); close the next one on it without answering. */
+        KEEP_ALIVE_THEN_CLOSE,
     }
+
+    /** A 200 body every operation the tests call can read (stats, exec, upload, a job, a token revoked). */
+    static final String OK_BODY = "{\"desk\":\"123456789\",\"exit\":0,\"remote_code\":0,\"stdout\":\"\",\"stderr\":\"\",\"failed\":[],"
+            + "\"files\":1,\"bytes\":0,\"name\":\"build\",\"state\":\"killed\",\"revoked\":true}";
 
     private final ServerSocket listener;
     private final Thread acceptor;
     private final List<Socket> held = new ArrayList<>();
     private final Map<String, Integer> byMethod = new HashMap<>();
+    private final Map<String, Integer> reusedByMethod = new HashMap<>();
+    /** STATUS: the status, the envelope's reason, the Retry-After header (null: none). */
+    volatile int status = 503;
+    volatile String reason = "unavailable";
+    volatile String retryAfter;
     private final AtomicInteger connections = new AtomicInteger();
     private volatile boolean stopped;
     volatile Mode mode;
     final String url;
 
     RawServer(Mode mode) throws IOException {
+        this(mode, 0);
+    }
+
+    /** On this port (0: any). */
+    RawServer(Mode mode, int port) throws IOException {
         this.mode = mode;
         listener = new ServerSocket();
-        listener.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 512);
+        listener.setReuseAddress(true);
+        listener.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 512);
         url = "http://127.0.0.1:" + listener.getLocalPort() + "/v1";
         acceptor = new Thread(this::acceptLoop, "raw-server-accept");
         acceptor.setDaemon(true);
@@ -63,6 +84,13 @@ final class RawServer implements AutoCloseable {
     int count(String method) {
         synchronized (byMethod) {
             return byMethod.getOrDefault(method, 0);
+        }
+    }
+
+    /** Requests with this method that came on a connection that had served a request before. */
+    int reused(String method) {
+        synchronized (byMethod) {
+            return reusedByMethod.getOrDefault(method, 0);
         }
     }
 
@@ -108,47 +136,73 @@ final class RawServer implements AutoCloseable {
         try {
             InputStream in = c.getInputStream();
             OutputStream out = c.getOutputStream();
-            Object[] got = readHead(in);
-            if (got == null) {
-                c.close();
-                return;
-            }
-            String head = (String) got[0];
-            byte[] rest = (byte[]) got[1];
-            String method = head.split(" ", 2)[0];
-            synchronized (byMethod) {
-                byMethod.merge(method, 1, Integer::sum);
-            }
-            switch (mode) {
-                case CLOSE_BEFORE_RESPONSE:
+            byte[] carry = new byte[0];
+            for (int k = 0; ; k++) {
+                Object[] got = readHead(new java.io.SequenceInputStream(new java.io.ByteArrayInputStream(carry), in));
+                if (got == null) {
                     c.close();
                     return;
-                case RESET_BEFORE_RESPONSE:
-                    c.setSoLinger(true, 0);
-                    c.close();
-                    return;
-                case CLOSE_AFTER_BODY:
-                    readBody(head, rest, in);
-                    c.close();
-                    return;
-                case STALL_MID_BODY:
-                    write(out, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
-                    break;
-                case STALL_MID_JSON:
-                    write(out, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"desk\":");
-                    break;
-                case STALL_MID_EVENTS: {
-                    write(out, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
-                    String ev = "event: stdout\ndata: {\"event\":\"stdout\",\"data\":\"hi\"}\n\n";
-                    write(out, Integer.toHexString(ev.getBytes(StandardCharsets.UTF_8).length) + "\r\n" + ev + "\r\n");
-                    break;
                 }
-                case SILENT:
-                    break;
-            }
-            synchronized (held) {
-                if (stopped) c.close();
-                else held.add(c); // held open, silent, until the server stops
+                String head = (String) got[0];
+                byte[] rest = (byte[]) got[1];
+                String method = head.split(" ", 2)[0];
+                synchronized (byMethod) {
+                    byMethod.merge(method, 1, Integer::sum);
+                    if (k > 0) reusedByMethod.merge(method, 1, Integer::sum);
+                }
+                Mode m = mode;
+                switch (m) {
+                    case CLOSE_BEFORE_RESPONSE:
+                        c.close();
+                        return;
+                    case RESET_BEFORE_RESPONSE:
+                        c.setSoLinger(true, 0);
+                        c.close();
+                        return;
+                    case CLOSE_AFTER_BODY:
+                        readBody(head, rest, in);
+                        c.close();
+                        return;
+                    case STALL_MID_BODY:
+                        write(out, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+                        break;
+                    case STALL_MID_JSON:
+                        write(out, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"desk\":");
+                        break;
+                    case STALL_MID_EVENTS: {
+                        write(out, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+                        String ev = "event: stdout\ndata: {\"event\":\"stdout\",\"data\":\"hi\"}\n\n";
+                        write(out, Integer.toHexString(ev.getBytes(StandardCharsets.UTF_8).length) + "\r\n" + ev + "\r\n");
+                        break;
+                    }
+                    case SILENT:
+                        break;
+                    case STATUS: {
+                        readBody(head, rest, in);
+                        int st = status;
+                        String kind = st == 429 || st == 409 ? "refused" : "unreachable";
+                        String body = "{\"error\":{\"kind\":\"" + kind + "\",\"message\":\"raw " + st + "\",\"reason\":\"" + reason + "\"}}";
+                        String ra = retryAfter;
+                        write(out, "HTTP/1.1 " + st + " Raw\r\nContent-Type: application/json\r\nContent-Length: " + body.length() + "\r\n"
+                                + (ra != null ? "Retry-After: " + ra + "\r\n" : "") + "Connection: close\r\n\r\n" + body);
+                        c.close();
+                        return;
+                    }
+                    case OK:
+                    case KEEP_ALIVE_THEN_CLOSE:
+                        if (m == Mode.KEEP_ALIVE_THEN_CLOSE && k > 0) {
+                            c.close();
+                            return;
+                        }
+                        carry = readBody(head, rest, in);
+                        write(out, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + OK_BODY.length() + "\r\n\r\n" + OK_BODY);
+                        continue;
+                }
+                synchronized (held) {
+                    if (stopped) c.close();
+                    else held.add(c); // held open, silent, until the server stops
+                }
+                return;
             }
         } catch (IOException e) {
             try {
@@ -159,8 +213,8 @@ final class RawServer implements AutoCloseable {
         }
     }
 
-    /** Reads a Content-Length or chunked body to its end (or the connection's). */
-    private static void readBody(String head, byte[] rest, InputStream in) throws IOException {
+    /** Reads a Content-Length or chunked body to its end (or the connection's); what came after it (the next request's start). */
+    private static byte[] readBody(String head, byte[] rest, InputStream in) throws IOException {
         long len = 0;
         boolean chunked = false;
         for (String line : head.split("\r\n")) {
@@ -174,18 +228,24 @@ final class RawServer implements AutoCloseable {
             String tail = new String(rest, StandardCharsets.ISO_8859_1);
             while (!tail.endsWith("0\r\n\r\n")) {
                 int n = in.read(b);
-                if (n < 0) return;
-                tail = (tail + new String(b, 0, n, StandardCharsets.ISO_8859_1));
+                if (n < 0) break;
+                tail = tail + new String(b, 0, n, StandardCharsets.ISO_8859_1);
                 if (tail.length() > 16) tail = tail.substring(tail.length() - 16);
             }
-            return;
+            return new byte[0];
+        }
+        if (rest.length >= len) {
+            byte[] after = new byte[(int) (rest.length - len)];
+            System.arraycopy(rest, (int) len, after, 0, after.length);
+            return after;
         }
         long got = rest.length;
         while (got < len) {
-            int n = in.read(b);
+            int n = in.read(b, 0, (int) Math.min(b.length, len - got));
             if (n < 0) break;
             got += n;
         }
+        return new byte[0];
     }
 
     private static void write(OutputStream out, String text) throws IOException {

@@ -143,16 +143,19 @@ class HelpersTest {
 
     @Test
     void retryPolicyBacksOffWithJitterAndHonoursRetryAfter() {
-        RetryPolicy p = RetryPolicy.of(3, Duration.ofMillis(100), Duration.ofSeconds(1));
+        RetryPolicy p = RetryPolicy.of(3, Duration.ofMillis(100), Duration.ofSeconds(1), Duration.ofSeconds(5));
         for (int i = 0; i < 50; i++) {
-            assertTrue(p.delayMillis(0, null) <= 100);
-            assertTrue(p.delayMillis(2, null) <= 400);
+            long first = p.delayMillis(0, null);
+            assertTrue(first >= 50 && first <= 100, "min(max, base × 2^n) × 0.5–1.0: " + first);
+            long third = p.delayMillis(2, null);
+            assertTrue(third >= 200 && third <= 400, "min(max, base × 2^n) × 0.5–1.0: " + third);
         }
         assertEquals(-1, p.delayMillis(3, null), "out of retries");
         assertEquals(700, p.delayMillis(0, 0.7));
-        assertEquals(-1, p.delayMillis(0, 7.0), "a Retry-After longer than maxDelay is not waited for");
+        assertEquals(5000, p.delayMillis(0, 5.0), "a Retry-After is waited up to maxRetryWait, not maxDelay");
+        assertEquals(-1, p.delayMillis(0, 7.0), "a Retry-After longer than maxRetryWait is not waited for");
         assertEquals(-1, RetryPolicy.none().delayMillis(0, null));
-        assertThrows(IllegalArgumentException.class, () -> RetryPolicy.of(-1, Duration.ZERO, Duration.ZERO));
+        assertThrows(UsageException.class, () -> RetryPolicy.of(-1, Duration.ZERO, Duration.ZERO));
     }
 
     @Test

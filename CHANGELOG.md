@@ -12,8 +12,29 @@
   and then went silent with the socket open hung the call forever. Exceeded:
   `UnreachableException` / `ConnectionLostException`, kind `timeout`; a timed
   out connection is closed, never reused. `null` is no limit.
-- A connection closed or reset before any answer to a `GET` is retried by the
-  retry policy (it was not); `PUT`/`POST`/`DELETE` are still sent once.
+- One retry rule across the GaiaDesk SDKs (`RetryPolicy`). A request is sent
+  again only when that cannot run anything twice: a connection never made
+  (DNS, refused, TLS handshake broken off, no local socket or pipe), any
+  method; a connection lost after sending (closed or reset before any answer)
+  or a 502/503/504, `GET`s only, a 503 `api_disabled`/`desk_ops_disabled`/
+  `local_api_off` final; a 429 or a 409 `idempotency_key_in_flight`, any
+  method. What changed: a `GET` whose connection was lost after sending is now
+  retried (it was not); any 429 is retried, whatever its reason (only
+  `rate_limited`/`desk_busy`/`idempotency_key_in_flight` were), and so is a
+  409 `idempotency_key_in_flight` (it was not); a 503 `local_api_off` is final (it was
+  retried); a connect that times out is now kind `timeout` and never retried
+  (it was kind `network` and retried for every method). Timeouts and answers
+  that had begun are never retried; an `Idempotency-Key` never unlocks a retry.
+- New defaults: backoff `min(maxDelay, baseDelay × 2^n) × 0.5–1.0` with
+  `baseDelay` 250 ms (was 500 ms) and `maxDelay` 8 s (was 30 s; it was full
+  jitter, 0–1.0). `Retry-After` (429 and 503 only; 502/504 back off) is waited
+  up to the new `maxRetryWait` (60 s; it was capped by `maxDelay`), a longer
+  one thrown at once carrying it: `RetryPolicy.of(maxRetries, baseDelay,
+  maxDelay, maxRetryWait)`, `getMaxRetryWait()`, `backoffMillis(n, jitter)`.
+  Invalid values are a `UsageException` (was `IllegalArgumentException`).
+- The JDK's `HttpClient` re-sends only `GET`/`HEAD` by itself; pinned on the
+  raw-socket server: a POST, PUT or DELETE (bodiless included) on a reused
+  keep-alive connection that closes reaches the server exactly once.
 - A stream ended by a transport error reports its class's kind in
   `Exit.getError()` (`connection_lost`, reason `timeout`, for an idle timeout).
 - Proven on a raw-socket test server: closed or reset before any response

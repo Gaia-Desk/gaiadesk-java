@@ -450,15 +450,26 @@ try {
 
 ## Retries, timeouts and cancellation
 
-**Retries** (`RetryPolicy`, default 2 retries, 500 ms base, 30 s at most,
-exponential with full jitter) happen only when trying again cannot do the
-operation twice: a connection that could not be opened; a `GET` whose
-connection closed or reset before any answer; 429 `rate_limited`,
-`desk_busy` or `idempotency_key_in_flight` (waiting `Retry-After`; one longer
-than the maximum is thrown instead); 502/503/504 answering a `GET`. Commands,
-job starts, uploads and token changes are never re-sent once the desk may
-have run them; streams are retried only before they start. A retried sealed
-operation is sealed afresh. `.retry(RetryPolicy.none())` turns them off.
+**Retries.** A request is sent again only when that cannot run anything twice:
+- **The connection was never made** (DNS, refused, TLS handshake): any method — nothing was sent.
+- **The connection was lost after sending, or the answer was 502, 503 or 504**: GETs only (reads).
+  A 503 that says the API or desk operations are switched off is not retried.
+- **429** (`rate_limited`, `desk_busy`) and **409** `idempotency_key_in_flight`: any method — the server refused
+  it before acting.
+
+Timeouts are never retried, and nothing is retried once its answer has begun. A call that changes something
+(POST, PUT, DELETE) is never sent again after it may have reached the server; an `Idempotency-Key` is sent but
+does not make a call retryable. 429 and 503 wait for `Retry-After`; one longer than `maxRetryWait`
+(default 60 s) is not waited for — the error carries it. Otherwise the wait is exponential backoff with jitter:
+`baseDelay` (default 250 ms) doubling up to `maxDelay` (default 8 s), times a random 0.5–1.0.
+`maxRetries` (default 2, so 3 attempts in all) sets how many times; 0 turns retries off. Each retry of
+a sealed operation is sealed afresh. (`.retry(RetryPolicy.of(maxRetries, baseDelay, maxDelay, maxRetryWait))`;
+`RetryPolicy.none()` is no retries.)
+
+The JDK's `HttpClient` itself re-sends only a `GET` or `HEAD` whose connection closed before any answer (once
+on Java 11 to 17, up to `jdk.httpclient.redirects.retrylimit`, default 5, on later Javas); it never re-sends a
+POST, PUT or DELETE, unless the application sets the system property `jdk.httpclient.enableAllMethodRetry`
+(the SDK warns when it is set).
 
 **Idempotency.** POSTs take `idempotencyKey("…")`: a retry with the same key
 and request within 24 hours gets the first answer again.
@@ -481,14 +492,10 @@ hang:
 - `null` is no limit (`Timeouts.none()` turns both off); zero or negative is
   a `UsageException`. `connectTimeout` (default 30 s) bounds connecting.
 - A connection closed or reset before any answer is an
-  `UnreachableException` (kind `network`) at once; a `GET` is then retried as
-  the retry policy allows, nothing else is. The JDK's `HttpClient` itself may
-  re-send a `GET` or `HEAD` (never another method) when the connection it
-  used was closed before any answer (once on Java 11 to 17, up to
-  `jdk.httpclient.redirects.retrylimit`, 5, on later Javas), so `exec`,
-  uploads, jobs, tokens and wakes go at most once, unless the application
-  sets the system property `jdk.httpclient.enableAllMethodRetry` (the SDK
-  warns when it is set).
+  `UnreachableException` (kind `network`) at once; a connect that times out
+  is kind `timeout`. The JDK's `HttpClient` itself may re-send a `GET` when
+  the connection it used was closed before any answer; it never re-sends a
+  POST, PUT or DELETE (see Retries).
 
 **Cancellation.** `new Cancellation()` given to a call's options
 (`.cancellation(c)`), then `c.cancel()` from any thread: the request is

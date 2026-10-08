@@ -110,6 +110,12 @@ class RawServerTest {
             assertEquals(2, s.count("POST"));
             fails(UnreachableException.class, () -> g.runJob(D, "nightly", "make"));
             assertEquals(3, s.count("POST"));
+            fails(UnreachableException.class, () -> g.exec(D, "deploy", new ExecOptions().idempotencyKey("k-1")));
+            assertEquals(4, s.count("POST"), "an Idempotency-Key does not make a POST retryable");
+            fails(UnreachableException.class, () -> g.killJob(D, "nightly"));
+            assertEquals(1, s.count("DELETE"));
+            fails(UnreachableException.class, () -> g.revokeToken(D, "ci"));
+            assertEquals(2, s.count("DELETE"));
             assertEquals(0, s.count("GET"));
         }
     }
@@ -233,6 +239,197 @@ class RawServerTest {
             Files.deleteIfExists(sockDir.resolve("api.sock"));
             Files.deleteIfExists(sockDir);
         }
+    }
+
+    // ───────────────────────────── the retry rule ─────────────────────────────
+
+    @Test
+    void aConnectionNeverMadeIsRetriedForAnyMethod() throws Exception {
+        int port;
+        try (java.net.ServerSocket probe = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            port = probe.getLocalPort();
+        }
+        String url = "http://127.0.0.1:" + port + "/v1";
+        GaiaDesk once = GaiaDesk.builder().apiKey("ak_t").deskToken("gdagt_t").baseUrl(url).e2e(E2eMode.OFF).onWarning(m -> {})
+                .retry(RetryPolicy.none()).build();
+        long[] took = new long[1];
+        UnreachableException refused = fails(UnreachableException.class, () -> once.exec(D, "deploy"), took);
+        assertEquals("network", refused.getKind());
+        assertTrue(took[0] < 2000, "took " + took[0] + " ms");
+        // The server appears ~100 ms later; backoff 200 ms × 2^n × 0.5–1.0 waits at least 100 + 200 ms in two retries.
+        GaiaDesk g = GaiaDesk.builder().apiKey("ak_t").deskToken("gdagt_t").baseUrl(url).e2e(E2eMode.OFF).onWarning(m -> {})
+                .retry(RetryPolicy.of(2, Duration.ofMillis(200), Duration.ofSeconds(1))).build();
+        java.util.concurrent.CompletableFuture<Integer> ran = java.util.concurrent.CompletableFuture.supplyAsync(() -> g.exec(D, "deploy").getExit());
+        Thread.sleep(100);
+        try (RawServer s = new RawServer(RawServer.Mode.OK, port)) {
+            assertEquals(Integer.valueOf(0), ran.get(10, TimeUnit.SECONDS));
+            assertEquals(1, s.count("POST"), "a POST whose connection was never made is sent again, and runs once");
+        }
+    }
+
+    private static GaiaDesk statusGd(RawServer s, int retries) {
+        return GaiaDesk.builder().apiKey("ak_t").deskToken("gdagt_t").baseUrl(s.url).e2e(E2eMode.OFF).onWarning(m -> {})
+                .retry(RetryPolicy.of(retries, Duration.ofMillis(5), Duration.ofMillis(50))).build();
+    }
+
+    private static void status(RawServer s, int status, String reason, String retryAfter) {
+        s.mode = RawServer.Mode.STATUS;
+        s.status = status;
+        s.reason = reason;
+        s.retryAfter = retryAfter;
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {502, 503, 504})
+    void a5xxIsRetriedForAGetOnly(int code) throws IOException {
+        try (RawServer s = new RawServer(RawServer.Mode.STATUS)) {
+            status(s, code, code == 504 ? "timeout" : "unavailable", null);
+            GaiaDesk g = statusGd(s, 2);
+            GaiaDeskException e = fails(GaiaDeskException.class, () -> g.stats(D));
+            assertEquals(Integer.valueOf(code), e.getStatus());
+            assertEquals(3, s.count("GET"));
+            fails(GaiaDeskException.class, () -> g.exec(D, "deploy"));
+            assertEquals(1, s.count("POST"));
+            fails(GaiaDeskException.class, () -> g.killJob(D, "nightly"));
+            assertEquals(1, s.count("DELETE"));
+        }
+    }
+
+    @Test
+    void a503ThatIsPermanentIsFinalAndRetryAfterIsHonoured() throws IOException {
+        try (RawServer s = new RawServer(RawServer.Mode.STATUS)) {
+            GaiaDesk g = statusGd(s, 2);
+            for (String permanent : new String[] {"api_disabled", "desk_ops_disabled", "local_api_off"}) {
+                status(s, 503, permanent, null);
+                int before = s.count("GET");
+                fails(UnreachableException.class, () -> g.stats(D));
+                assertEquals(before + 1, s.count("GET"), permanent);
+            }
+            status(s, 503, "unavailable", "1");
+            GaiaDesk once = statusGd(s, 1);
+            long[] took = new long[1];
+            int before = s.count("GET");
+            fails(UnreachableException.class, () -> once.stats(D), took);
+            assertEquals(before + 2, s.count("GET"));
+            assertTrue(took[0] >= 900, "Retry-After: 1 was waited for (" + took[0] + " ms)");
+        }
+    }
+
+    @Test
+    void a429OrAKeyInFlightIsRetriedForAnyMethodAfterRetryAfter() throws IOException {
+        try (RawServer s = new RawServer(RawServer.Mode.STATUS)) {
+            GaiaDesk g = statusGd(s, 2);
+            status(s, 429, "rate_limited", "0");
+            RefusedException limited = fails(RefusedException.class, () -> g.exec(D, "deploy"));
+            assertEquals(Integer.valueOf(429), limited.getStatus());
+            assertEquals(3, s.count("POST"));
+            status(s, 429, "desk_busy", "120");
+            long[] took = new long[1];
+            RefusedException later = fails(RefusedException.class, () -> g.uploadBytes(new byte[16], D, "/tmp/x"), took);
+            assertEquals(Double.valueOf(120), later.getRetryAfter(), "a Retry-After over maxRetryWait is thrown at once, carrying it");
+            assertEquals(1, s.count("PUT"));
+            assertTrue(took[0] < 1000, "took " + took[0] + " ms");
+            status(s, 409, "idempotency_key_in_flight", null);
+            fails(RefusedException.class, () -> g.exec(D, "deploy", new ExecOptions().idempotencyKey("k-2")));
+            assertEquals(6, s.count("POST"));
+            fails(RefusedException.class, () -> g.killJob(D, "nightly"));
+            assertEquals(3, s.count("DELETE"));
+            status(s, 409, "e2e_required", null);
+            fails(RefusedException.class, () -> g.stats(D));
+            assertEquals(1, s.count("GET"), "another 409 is final");
+        }
+    }
+
+    @Test
+    void timeoutsAreNeverRetried() throws IOException {
+        try (RawServer s = new RawServer(RawServer.Mode.STALL_MID_JSON)) {
+            GaiaDesk g = gd(s, 2, 1, 1);
+            fails(ConnectionLostException.class, () -> g.stats(D));
+            assertEquals(1, s.count("GET"), "an answer that had begun");
+            s.mode = RawServer.Mode.SILENT;
+            fails(UnreachableException.class, () -> g.stats(D));
+            assertEquals(2, s.count("GET"), "no answer within the response timeout");
+        }
+    }
+
+    @Test
+    void onAReusedConnectionThatClosesTheJdkNeverResendsAPostPutOrDelete() throws IOException {
+        try (RawServer s = new RawServer(RawServer.Mode.KEEP_ALIVE_THEN_CLOSE)) {
+            GaiaDesk g = statusGd(s, 2);
+            String[] methods = {"DELETE", "POST", "PUT", "DELETE"};
+            Executable[] calls = {() -> g.killJob(D, "nightly"), () -> g.exec(D, "deploy"), () -> g.uploadBytes(new byte[1024], D, "/tmp/x"),
+                    () -> g.revokeToken(D, "ci")};
+            for (int i = 0; i < calls.length; i++) {
+                assertEquals(D, assertTimeoutPreemptively(BOUND, () -> g.stats(D)).getDesk(), "a fresh connection answers");
+                int before = s.count(methods[i]);
+                int reused = s.reused(methods[i]);
+                UnreachableException e = fails(UnreachableException.class, calls[i]);
+                assertEquals("network", e.getKind());
+                assertEquals(before + 1, s.count(methods[i]), methods[i] + " reached the server exactly once");
+                assertEquals(reused + 1, s.reused(methods[i]), methods[i] + " went on the reused connection");
+            }
+            // A GET on a reused connection that closes is sent again (by the JDK, or by the SDK): it is a read.
+            assertEquals(D, assertTimeoutPreemptively(BOUND, () -> g.stats(D)).getDesk());
+            int reused = s.reused("GET");
+            assertEquals(D, assertTimeoutPreemptively(BOUND, () -> g.stats(D)).getDesk());
+            assertTrue(s.reused("GET") > reused, "the GET went on the reused connection first");
+        }
+    }
+
+    @Test
+    void withNoRetriesEveryModeIsOneAttempt() throws IOException {
+        try (RawServer s = new RawServer(RawServer.Mode.CLOSE_BEFORE_RESPONSE)) {
+            GaiaDesk g = statusGd(s, 0);
+            int gets = 0;
+            int posts = 0;
+            for (RawServer.Mode m : new RawServer.Mode[] {RawServer.Mode.CLOSE_BEFORE_RESPONSE, RawServer.Mode.RESET_BEFORE_RESPONSE, RawServer.Mode.CLOSE_AFTER_BODY}) {
+                s.mode = m;
+                fails(UnreachableException.class, () -> g.exec(D, "deploy"));
+                assertEquals(++posts, s.count("POST"), m.toString());
+                int before = s.count("GET");
+                fails(UnreachableException.class, () -> g.stats(D));
+                inRange(s.count("GET") - before, 1, 6, m + " (the JDK's own GET re-sends)");
+                gets = s.count("GET");
+            }
+            Object[][] statuses = {{502, "x", null}, {503, "x", null}, {504, "timeout", null}, {429, "rate_limited", "0"}, {409, "idempotency_key_in_flight", null}};
+            for (Object[] st : statuses) {
+                status(s, (Integer) st[0], (String) st[1], (String) st[2]);
+                fails(GaiaDeskException.class, () -> g.stats(D));
+                assertEquals(++gets, s.count("GET"), "HTTP " + st[0]);
+                fails(GaiaDeskException.class, () -> g.exec(D, "deploy"));
+                assertEquals(++posts, s.count("POST"), "HTTP " + st[0]);
+            }
+        }
+    }
+
+    @Test
+    void theBackoffAndTheRetryAfterCap() {
+        RetryPolicy d = RetryPolicy.defaults();
+        assertEquals(2, d.getMaxRetries());
+        assertEquals(Duration.ofMillis(250), d.getBaseDelay());
+        assertEquals(Duration.ofSeconds(8), d.getMaxDelay());
+        assertEquals(Duration.ofSeconds(60), d.getMaxRetryWait());
+        assertEquals(125, d.backoffMillis(0, 0.5));
+        assertEquals(250, d.backoffMillis(0, 1.0));
+        assertEquals(1000, d.backoffMillis(2, 1.0));
+        assertEquals(8000, d.backoffMillis(5, 1.0), "capped at maxDelay");
+        assertEquals(4000, d.backoffMillis(40, 0.5));
+        for (int i = 0; i < 200; i++) {
+            long first = d.delayMillis(0, null);
+            assertTrue(first >= 125 && first <= 250, "jitter 0.5–1.0: " + first);
+            long second = d.delayMillis(1, null);
+            assertTrue(second >= 250 && second <= 500, "jitter 0.5–1.0: " + second);
+        }
+        assertEquals(-1, d.delayMillis(2, null), "out of retries: 3 attempts in all");
+        assertEquals(60000, d.delayMillis(0, 60.0));
+        assertEquals(-1, d.delayMillis(0, 60.5), "a Retry-After over 60 s is not waited for");
+        assertEquals(0, d.delayMillis(0, -3.0));
+        assertEquals(-1, RetryPolicy.none().delayMillis(0, 0.0));
+        assertEquals(Duration.ofSeconds(60), RetryPolicy.of(1, Duration.ZERO, Duration.ZERO).getMaxRetryWait());
+        assertThrows(UsageException.class, () -> RetryPolicy.of(-1, Duration.ZERO, Duration.ZERO));
+        assertThrows(UsageException.class, () -> RetryPolicy.of(1, Duration.ofMillis(-1), Duration.ZERO));
+        assertThrows(UsageException.class, () -> RetryPolicy.of(1, Duration.ZERO, Duration.ofMillis(-1)));
+        assertThrows(UsageException.class, () -> RetryPolicy.of(1, Duration.ZERO, Duration.ZERO, Duration.ofSeconds(-1)));
     }
 
     @Test

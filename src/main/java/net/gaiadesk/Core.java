@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
@@ -214,23 +213,10 @@ final class Core {
         return layer.call(r.e2eDesk, r.e2eOp, r.e2eRequest, r.deskToken, r.wake, r.cancel, sealed -> send(r, sealed));
     }
 
+    /** The wait before retrying {@code r} after {@code e} (the rule is {@link RetryPolicy}'s); -1: not retried. */
     private long retryDelay(GaiaDeskException e, Req r, int attempt) {
-        Integer status = e.getStatus();
-        String reason = e.getReason();
-        boolean retryable;
-        if (status == null) {
-            // Nothing was sent (no connection): any request. A connection closed or reset before any answer: reads
-            // only (the request may have reached the server). A timeout is not tried again.
-            boolean unsent = e.getCause() instanceof ConnectException || e.getCause() instanceof HttpConnectTimeoutException;
-            retryable = e instanceof UnreachableException && (unsent || ("network".equals(e.getKind()) && r.method.equals("GET")));
-        } else if (status == 429) {
-            retryable = "rate_limited".equals(reason) || "desk_busy".equals(reason) || "idempotency_key_in_flight".equals(reason);
-        } else if (status == 502 || status == 503 || status == 504) {
-            retryable = r.method.equals("GET") && !"desk_ops_disabled".equals(reason) && !"api_disabled".equals(reason);
-        } else {
-            retryable = false;
-        }
-        return retryable ? retry.delayMillis(attempt, e.getRetryAfter()) : -1;
+        if (!RetryPolicy.retryable(e, r.method)) return -1;
+        return retry.delayMillis(attempt, RetryPolicy.honouredRetryAfter(e));
     }
 
     private static void sleep(long ms, Req r) {
@@ -345,7 +331,11 @@ final class Core {
             throw Errors.interrupted(op);
         } catch (IOException | RuntimeException e) {
             if (r.cancel.isCancelled()) throw Errors.interrupted(op);
-            if (e instanceof HttpTimeoutException && !(e instanceof HttpConnectTimeoutException)) {
+            if (e instanceof HttpConnectTimeoutException) {
+                throw new UnreachableException(where + " could not be reached: connecting timed out (connectTimeout)",
+                        ErrorDetails.builder().kind("timeout").reason("timeout").exitCode(255).argv(List.of(op)).build(), e);
+            }
+            if (e instanceof HttpTimeoutException) {
                 String which = timeout == null ? "in time" : "within " + seconds(timeout) + " s (" + (r.timeout != null ? "requestTimeout" : "responseTimeout") + ")";
                 throw new UnreachableException(where + " did not answer " + op + " " + which,
                         ErrorDetails.builder().kind("timeout").reason("timeout").exitCode(255).argv(List.of(op)).build(), e);
