@@ -26,6 +26,7 @@ import net.gaiadesk.internal.Errors;
 import net.gaiadesk.internal.HttpCall;
 import net.gaiadesk.internal.HttpEngine;
 import net.gaiadesk.internal.HttpResult;
+import net.gaiadesk.internal.IdleTimeoutInputStream;
 import net.gaiadesk.internal.Json;
 import net.gaiadesk.internal.Urls;
 import org.jspecify.annotations.Nullable;
@@ -51,18 +52,18 @@ final class Core {
     private final Credentials credentials;
     final @Nullable E2eLayer e2e;
     final RetryPolicy retry;
-    final @Nullable Duration requestTimeout;
+    final Timeouts timeouts;
     final Executor executor;
 
     Core(TransportKind transport, String baseUrl, String where, HttpEngine engine, Credentials credentials, @Nullable E2eConfig e2eConfig,
-            RetryPolicy retry, @Nullable Duration requestTimeout, Executor executor) {
+            RetryPolicy retry, Timeouts timeouts, Executor executor) {
         this.transport = transport;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.where = where;
         this.engine = engine;
         this.credentials = credentials;
         this.retry = retry;
-        this.requestTimeout = requestTimeout;
+        this.timeouts = timeouts;
         this.executor = executor;
         this.e2e = e2eConfig == null ? null
                 : new E2eLayer(e2eConfig.mode, e2eConfig.pins, e2eConfig.warn, (method, path, deskToken, json, cancel) -> {
@@ -218,7 +219,10 @@ final class Core {
         String reason = e.getReason();
         boolean retryable;
         if (status == null) {
-            retryable = e instanceof UnreachableException && (e.getCause() instanceof ConnectException || e.getCause() instanceof HttpConnectTimeoutException);
+            // Nothing was sent (no connection): any request. A connection closed or reset before any answer: reads
+            // only (the request may have reached the server). A timeout is not tried again.
+            boolean unsent = e.getCause() instanceof ConnectException || e.getCause() instanceof HttpConnectTimeoutException;
+            retryable = e instanceof UnreachableException && (unsent || ("network".equals(e.getKind()) && r.method.equals("GET")));
         } else if (status == 429) {
             retryable = "rate_limited".equals(reason) || "desk_busy".equals(reason) || "idempotency_key_in_flight".equals(reason);
         } else if (status == 502 || status == 503 || status == 504) {
@@ -249,6 +253,42 @@ final class Core {
             reg.close();
         }
         if (r.cancel.isCancelled()) throw Errors.interrupted(r.op());
+    }
+
+    /** A duration in seconds as people write it: {@code 1}, {@code 0.5}, {@code 960}. */
+    static String seconds(Duration d) {
+        long ms = d.toMillis();
+        return ms % 1000 == 0 ? String.valueOf(ms / 1000) : String.valueOf(ms / 1000.0);
+    }
+
+    /** The answer, every read of its body bounded by the idle timeout. */
+    private HttpResult bounded(HttpResult raw, String op) {
+        Duration idle = timeouts.getIdleTimeout();
+        if (idle == null) return raw;
+        InputStream body = new IdleTimeoutInputStream(raw.body(), idle, raw::close, () -> new ConnectionLostException(
+                where + " stopped sending its answer to " + op + ": nothing for " + seconds(idle) + " s (idleTimeout)",
+                ErrorDetails.builder().kind("timeout").reason("timeout").exitCode(255).argv(List.of(op)).build()));
+        return new HttpResult() {
+            @Override
+            public int status() {
+                return raw.status();
+            }
+
+            @Override
+            public @Nullable String header(String name) {
+                return raw.header(name);
+            }
+
+            @Override
+            public InputStream body() {
+                return body;
+            }
+
+            @Override
+            public void close() {
+                raw.close(); // abandoned (never reused): what is left of the body is not read
+            }
+        };
     }
 
     private String url(String path, Map<String, String> query) {
@@ -292,10 +332,12 @@ final class Core {
             body = r.bytes;
         }
         if (r.cancel.isCancelled() || Thread.currentThread().isInterrupted()) throw Errors.interrupted(op);
-        Duration timeout = r.timeout != null ? r.timeout : requestTimeout;
+        // The answer must begin within the response timeout (sending the request included); its body is then read
+        // under the idle timeout (bounded()), so a peer that goes silent is an error, never a hang.
+        Duration timeout = r.timeout != null ? r.timeout : timeouts.getResponseTimeout();
         HttpResult res;
         try {
-            res = engine.send(new HttpCall(r.method, URI.create(url(r.path, query)), headers, body, timeout), r.cancel);
+            res = bounded(engine.send(new HttpCall(r.method, URI.create(url(r.path, query)), headers, body, timeout), r.cancel), op);
         } catch (GaiaDeskException e) {
             throw e;
         } catch (InterruptedException e) {
@@ -304,7 +346,8 @@ final class Core {
         } catch (IOException | RuntimeException e) {
             if (r.cancel.isCancelled()) throw Errors.interrupted(op);
             if (e instanceof HttpTimeoutException && !(e instanceof HttpConnectTimeoutException)) {
-                throw new UnreachableException(where + " did not answer " + op + " within " + (timeout == null ? "the time allowed" : timeout.toMillis() + " ms"),
+                String which = timeout == null ? "in time" : "within " + seconds(timeout) + " s (" + (r.timeout != null ? "requestTimeout" : "responseTimeout") + ")";
+                throw new UnreachableException(where + " did not answer " + op + " " + which,
                         ErrorDetails.builder().kind("timeout").reason("timeout").exitCode(255).argv(List.of(op)).build(), e);
             }
             throw new UnreachableException(where + " could not be reached: " + (e.getMessage() != null ? e.getMessage() : e.toString()),
@@ -315,7 +358,7 @@ final class Core {
             String text;
             try {
                 text = new String(readAll(res.body()), StandardCharsets.UTF_8);
-            } catch (IOException e) {
+            } catch (IOException | ConnectionLostException e) {
                 text = "";
             } finally {
                 res.close();

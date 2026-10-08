@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1 (unreleased)
+
+- Never hang on a dropped or stalled connection. `Timeouts` (`.timeouts(...)`
+  on every builder: hosted API, local, LAN): `responseTimeout` (default 16
+  minutes, above the API's 15-minute call limit; it was unlimited) bounds the
+  wait for an answer to begin, sending the request included;
+  `idleTimeout` (default 90 s; streams and held waits keep alive every 15 s)
+  bounds every read of a body (JSON, error bodies, downloads plain and sealed,
+  event streams), which nothing bounded before: a peer that sent the headers
+  and then went silent with the socket open hung the call forever. Exceeded:
+  `UnreachableException` / `ConnectionLostException`, kind `timeout`; a timed
+  out connection is closed, never reused. `null` is no limit.
+- A connection closed or reset before any answer to a `GET` is retried by the
+  retry policy (it was not); `PUT`/`POST`/`DELETE` are still sent once.
+- A stream ended by a transport error reports its class's kind in
+  `Exit.getError()` (`connection_lost`, reason `timeout`, for an idle timeout).
+- Proven on a raw-socket test server: closed or reset before any response
+  byte (with and without reading a 4 MiB upload), stalled mid-body, mid-JSON
+  and mid-stream, silent, and 300 dropped requests in a row.
+
 ## 0.1.0 (unreleased)
 
 First release: `net.gaiadesk:gaiadesk`, the GaiaDesk SDK for Java and Kotlin (Java 11+).

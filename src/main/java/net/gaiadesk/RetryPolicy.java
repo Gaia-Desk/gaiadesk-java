@@ -10,6 +10,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <ul>
  *   <li>the connection could not be opened (nothing was sent);
+ *   <li>a {@code GET} whose connection was closed or reset before any answer (a timeout is not retried);
  *   <li>429 {@code rate_limited}, {@code desk_busy} or {@code idempotency_key_in_flight} (the operation was not
  *       run), waiting the answer's {@code Retry-After} when it has one;
  *   <li>502, 503 or 504 answering a {@code GET} (reads only: listing, stats, logs, a wait, a download).

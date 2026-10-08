@@ -53,7 +53,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class GaiaDesk {
     /** This SDK's version. */
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.1.1";
     /** The hosted API. */
     public static final String DEFAULT_API_URL = "https://api.gaiadesk.net/v1";
     /** The most one file may be through the API (256 MB). */
@@ -446,7 +446,7 @@ public final class GaiaDesk {
         private final Map<String, String> e2eKeys = new LinkedHashMap<>();
         private @Nullable Consumer<String> onWarning;
         private RetryPolicy retry = RetryPolicy.defaults();
-        private @Nullable Duration requestTimeout;
+        private Timeouts timeouts = Timeouts.defaults();
         private Duration connectTimeout = Duration.ofSeconds(30);
         private @Nullable Executor executor;
         private @Nullable HttpClient httpClient;
@@ -506,9 +506,21 @@ public final class GaiaDesk {
             return this;
         }
 
-        /** How long any request waits for its answer's headers (default: as long as it takes; the API holds calls under 15 minutes). */
+        /**
+         * How long the SDK waits on the network: for an answer to begin, and for each read of its body (default
+         * {@link Timeouts#defaults()}: 16 minutes and 90 s). A peer that stops answering is then an error, never a hang.
+         */
+        public Builder timeouts(Timeouts timeouts) {
+            this.timeouts = timeouts;
+            return this;
+        }
+
+        /**
+         * How long any request waits for its answer to begin: {@link #timeouts(Timeouts)} with this
+         * {@link Timeouts#responseTimeout(Duration) responseTimeout} (default 16 minutes; the API holds calls under 15).
+         */
         public Builder requestTimeout(Duration timeout) {
-            this.requestTimeout = timeout;
+            this.timeouts = timeouts.responseTimeout(timeout);
             return this;
         }
 
@@ -567,6 +579,11 @@ public final class GaiaDesk {
             String dt = nonEmpty(deskToken, "deskToken (a scoped agent token, gdagt_…)");
             Executor ex = executor != null ? executor : Threads.executor();
             Consumer<String> warn = onWarning != null ? onWarning : m -> System.getLogger("net.gaiadesk").log(System.Logger.Level.WARNING, m);
+            String allRetry = System.getProperty("jdk.httpclient.enableAllMethodRetry");
+            if (allRetry != null && (allRetry.isEmpty() || Boolean.parseBoolean(allRetry)) && kind != TransportKind.LOCAL) {
+                warn.accept("the system property jdk.httpclient.enableAllMethodRetry is set: the JDK's HttpClient may then send a command, "
+                        + "an upload or a job start twice when a connection drops before its answer");
+            }
             Core core;
             if (kind == TransportKind.API) {
                 String key = nonEmpty(apiKey, "apiKey");
@@ -581,7 +598,7 @@ public final class GaiaDesk {
                 }
                 HttpEngine engine = new JdkHttpEngine(httpClient != null ? httpClient : Transports.defaultClient(connectTimeout));
                 core = new Core(TransportKind.API, url, "the GaiaDesk API (" + url + ")", engine, Transports.api(key, dt),
-                        new Core.E2eConfig(e2e != null ? e2e : E2eMode.AUTO, pins, warn), retry, requestTimeout, ex);
+                        new Core.E2eConfig(e2e != null ? e2e : E2eMode.AUTO, pins, warn), retry, timeouts, ex);
             } else if (kind == TransportKind.LOCAL) {
                 if (baseUrl != null) throw Check.usage("baseUrl does not apply to the local transport");
                 boolean windows = LocalApi.isWindows();
@@ -593,7 +610,7 @@ public final class GaiaDesk {
                 String target = nonEmpty(socketPath, "socketPath");
                 if (target == null) target = windows ? LocalApi.pipeName(e, System.getProperty("user.name", "")) : LocalApi.socketPath(e, home, false);
                 core = new Core(TransportKind.LOCAL, "http://localhost/v1", "the desk's local API (" + target + ")", Transports.localEngine(target, windows),
-                        Transports.local(nonEmpty(token, "token"), dt, LocalApi.tokenPath(e, home, windows)), null, retry, requestTimeout, ex);
+                        Transports.local(nonEmpty(token, "token"), dt, LocalApi.tokenPath(e, home, windows)), null, retry, timeouts, ex);
             } else {
                 String url = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
                 if (!url.matches("(?i)^https://[^/].*")) {
@@ -603,7 +620,7 @@ public final class GaiaDesk {
                 PinnedTrust trust = new PinnedTrust(Lan.normalizeFingerprint(fingerprint));
                 String origin = Transports.hostOf(url);
                 core = new Core(TransportKind.LAN, url, "the desk's LAN gateway (" + origin + ")", Transports.lanEngine(trust, connectTimeout, origin),
-                        Transports.lan(dt), null, retry, requestTimeout, ex);
+                        Transports.lan(dt), null, retry, timeouts, ex);
             }
             return new GaiaDesk(core);
         }

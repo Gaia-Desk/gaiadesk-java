@@ -8,7 +8,7 @@ webhooks and create support sessions. Desk operations are
 [end-to-end encrypted](#end-to-end-encryption) whenever the desk can open them.
 The same client also speaks to a desk's own [local API and LAN gateway](#local-and-lan).
 
-- Maven coordinates: `net.gaiadesk:gaiadesk:0.1.0`, package `net.gaiadesk`
+- Maven coordinates: `net.gaiadesk:gaiadesk:0.1.1`, package `net.gaiadesk`
 - Java 11+ (Kotlin-friendly: JSpecify nullability, no checked exceptions)
 - HTTP: `java.net.http.HttpClient` from the JDK; no OkHttp, no Netty
 - Runtime dependencies: Jackson databind (JSON) and JSpecify (annotations); see [Dependencies](#dependencies)
@@ -53,7 +53,7 @@ Gradle (Kotlin DSL):
 
 ```kotlin
 dependencies {
-    implementation("net.gaiadesk:gaiadesk:0.1.0")
+    implementation("net.gaiadesk:gaiadesk:0.1.1")
 }
 ```
 
@@ -63,7 +63,7 @@ Maven:
 <dependency>
   <groupId>net.gaiadesk</groupId>
   <artifactId>gaiadesk</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 
@@ -452,7 +452,8 @@ try {
 
 **Retries** (`RetryPolicy`, default 2 retries, 500 ms base, 30 s at most,
 exponential with full jitter) happen only when trying again cannot do the
-operation twice: a connection that could not be opened; 429 `rate_limited`,
+operation twice: a connection that could not be opened; a `GET` whose
+connection closed or reset before any answer; 429 `rate_limited`,
 `desk_busy` or `idempotency_key_in_flight` (waiting `Retry-After`; one longer
 than the maximum is thrown instead); 502/503/504 answering a `GET`. Commands,
 job starts, uploads and token changes are never re-sent once the desk may
@@ -462,10 +463,32 @@ operation is sealed afresh. `.retry(RetryPolicy.none())` turns them off.
 **Idempotency.** POSTs take `idempotencyKey("…")`: a retry with the same key
 and request within 24 hours gets the first answer again.
 
-**Timeouts.** `connectTimeout` (default 30 s) and `requestTimeout` (default
-none: the API holds every call under 15 minutes) on the builder; per call,
-`requestTimeout(Duration)`. A request timeout covers waiting for the answer's
-headers, so streams and held waits run as long as they last.
+**Timeouts** (`Timeouts`, `.timeouts(...)` on every builder: hosted API,
+local and LAN) make a server or proxy that stops answering an error, never a
+hang:
+
+- `responseTimeout` (default 16 minutes, above the API's 15-minute call
+  limit): the longest wait for an answer to begin, sending the request
+  included. Exceeded: `UnreachableException`, kind `timeout`. Per call,
+  `requestTimeout(Duration)` replaces it; `.requestTimeout(d)` on the builder
+  is `.timeouts(Timeouts.defaults().responseTimeout(d))`.
+- `idleTimeout` (default 90 s; streams and held waits send a keep-alive every
+  15 s): the longest silence while reading a body (JSON, an error, a
+  download, an event stream). It bounds each read, not the whole body.
+  Exceeded mid-answer: `ConnectionLostException`, kind `timeout` (a stream
+  ends with that error in its `Exit`: kind `connection_lost`, reason
+  `timeout`, exit code 255; a download to a file leaves no file).
+- `null` is no limit (`Timeouts.none()` turns both off); zero or negative is
+  a `UsageException`. `connectTimeout` (default 30 s) bounds connecting.
+- A connection closed or reset before any answer is an
+  `UnreachableException` (kind `network`) at once; a `GET` is then retried as
+  the retry policy allows, nothing else is. The JDK's `HttpClient` itself may
+  re-send a `GET` or `HEAD` (never another method) when the connection it
+  used was closed before any answer (once on Java 11 to 17, up to
+  `jdk.httpclient.redirects.retrylimit`, 5, on later Javas), so `exec`,
+  uploads, jobs, tokens and wakes go at most once, unless the application
+  sets the system property `jdk.httpclient.enableAllMethodRetry` (the SDK
+  warns when it is set).
 
 **Cancellation.** `new Cancellation()` given to a call's options
 (`.cancellation(c)`), then `c.cancel()` from any thread: the request is

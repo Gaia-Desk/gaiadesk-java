@@ -237,6 +237,17 @@ public final class ExecStream implements Iterable<Chunk>, AutoCloseable {
         return new Exit(code, error != null ? error.get("message").asText() : "", null, error == null ? null : Json.convert(error, ExecError.class));
     }
 
+    /** The error kind a stream's exit reports for a transport error: its class's ({@code timeout} is a reason, not a kind). */
+    private static String streamKind(GaiaDeskException e) {
+        if (e instanceof ProtocolException) return "protocol";
+        if (e instanceof ConnectionLostException) return "connection_lost";
+        if (e instanceof UnreachableException) return "unreachable";
+        if (e instanceof RefusedException) return "refused";
+        if (e instanceof OperationFailedException) return "failed";
+        if (e instanceof UsageException) return "usage";
+        return e.getKind();
+    }
+
     /** The Exit for an error that ended (or prevented) a stream. */
     static Exit exitForError(GaiaDeskException e) {
         Errors.Envelope env = Errors.envelope(e.getJson());
@@ -247,7 +258,7 @@ public final class ExecStream implements Iterable<Chunk>, AutoCloseable {
             if (env.reason != null) src.put("reason", env.reason);
             if (env.desk != null) src.put("desk", env.desk);
         } else {
-            src.put("kind", e.getKind().equals("network") ? "unreachable" : e.getKind());
+            src.put("kind", streamKind(e));
             src.put("message", String.valueOf(e.getMessage()));
             if (e.getReason() != null) src.put("reason", e.getReason());
             if (e.getDesk() != null) src.put("desk", e.getDesk());
