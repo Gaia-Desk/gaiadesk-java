@@ -56,7 +56,7 @@ public final class TokenSpec extends CallOptions<TokenSpec> {
         return this;
     }
 
-    /** What it may do (see {@link Scopes}); {@link Scopes#ADMIN} is never implied. */
+    /** What it may do (see {@link Scopes}); the {@code admin} scope cannot be minted through the API ({@code admin_not_via_api}). */
     public TokenSpec scopes(String... scopes) {
         return scopes(Arrays.asList(scopes));
     }

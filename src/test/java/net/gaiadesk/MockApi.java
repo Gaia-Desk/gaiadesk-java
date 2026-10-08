@@ -281,10 +281,11 @@ final class MockApi implements AutoCloseable {
                             "timed_out", false, "truncated", false, "error", obj("kind", "failed", "reason", "no_such_cwd", "message", "no such directory"))));
                     return ev;
                 }
-                if (spec.path("admin").asBoolean(false)) {
+                if (cmd.equals("as-admin")) {
+                    // What the API answers an exec that asked for administrator work: refused before anything ran.
                     ev.add(exit(obj("desk", desk, "exit", 254, "remote_code", null, "duration_ms", 1, "notes", List.of(), "stdout", "", "stderr", "",
                             "timed_out", false, "truncated", false,
-                            "error", obj("kind", "refused", "reason", "admin_not_enabled", "message", "Admin access is off on this desk"))));
+                            "error", obj("kind", "refused", "reason", "admin_not_via_api", "message", "administrator work is not available through the API"))));
                     return ev;
                 }
                 StringBuilder text = new StringBuilder("ran: " + cmd + " é\n");
@@ -571,6 +572,11 @@ final class MockApi implements AutoCloseable {
         boolean tokens = rest.startsWith("/tokens");
         if (tokens && isKey) {
             error(ex, "refused", "token administration over the API works only for a signed-in person's own desk", "session_required", id);
+            return;
+        }
+        if (tokens && method.equals("POST") && "admin-bot".equals(rec.json().path("name").asText())) {
+            // What the API answers a mint asking for the admin scope.
+            error(ex, "refused", "the admin scope cannot be minted through the API", "admin_not_via_api", id);
             return;
         }
         if (!tokens && isKey && deskToken == null) {

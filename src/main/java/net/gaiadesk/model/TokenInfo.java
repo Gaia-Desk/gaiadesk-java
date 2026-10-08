@@ -60,7 +60,7 @@ public final class TokenInfo extends ModelObject {
         return revoked;
     }
 
-    /** What it may do: {@code screen}, {@code exec}, {@code shell}, {@code cp}, {@code forward}, {@code jobs}, {@code admin}. */
+    /** What it may do: {@code screen}, {@code exec}, {@code shell}, {@code cp}, {@code forward}, {@code jobs} ({@code admin} on a token minted with {@code gaiadesk-cli}). */
     public @Nullable List<String> getScopes() {
         return scopes;
     }

@@ -33,14 +33,11 @@ public final class Reasons {
     public static final String E2E_KEY_MISMATCH = "e2e_key_mismatch";
     /** A sealed message did not open. */
     public static final String E2E_DECRYPT_FAILED = "e2e_decrypt_failed";
-    /** Exec {@code admin}: the token has no {@code admin} scope (or the caller is a person). */
-    public static final String ADMIN_SCOPE_MISSING = "admin_scope_missing";
-    /** Exec {@code admin}: the desk owner's Admin access switch is off. */
-    public static final String ADMIN_NOT_ENABLED = "admin_not_enabled";
-    /** Exec {@code admin}: the person at the desk said no, did not answer, or nobody is signed in; or a confined token. */
-    public static final String ADMIN_DENIED = "admin_denied";
-    /** Exec {@code admin}: no privileged GaiaDesk process, or a desk too old for it (never run as the user instead). */
-    public static final String ADMIN_UNAVAILABLE = "admin_unavailable";
+    /**
+     * Administrator work (an exec as root / SYSTEM, a token with the {@code admin} scope) is not available through
+     * the API: only {@code gaiadesk-cli exec --admin} runs it ({@link RefusedException}; an exec answers exit 254).
+     */
+    public static final String ADMIN_NOT_VIA_API = "admin_not_via_api";
     /** Windows Smart App Control / WDAC refused the program, SYSTEM included. */
     public static final String BLOCKED_BY_OS_POLICY = "blocked_by_os_policy";
     /** The local API is not being served here. */

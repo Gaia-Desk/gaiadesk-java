@@ -45,7 +45,7 @@ public class GaiaDeskException extends RuntimeException {
         return details.kind;
     }
 
-    /** The finer cause the server or desk gave ({@code rate_limited}, {@code e2e_required}, {@code admin_denied}, ...), or null. */
+    /** The finer cause the server or desk gave ({@code rate_limited}, {@code e2e_required}, {@code desk_busy}, ...), or null. */
     public @Nullable String getReason() {
         return details.reason;
     }

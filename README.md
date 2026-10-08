@@ -8,7 +8,7 @@ webhooks and create support sessions. Desk operations are
 [end-to-end encrypted](#end-to-end-encryption) whenever the desk can open them.
 The same client also speaks to a desk's own [local API and LAN gateway](#local-and-lan).
 
-- Maven coordinates: `net.gaiadesk:gaiadesk:0.1.1`, package `net.gaiadesk`
+- Maven coordinates: `net.gaiadesk:gaiadesk:0.1.2`, package `net.gaiadesk`
 - Java 11+ (Kotlin-friendly: JSpecify nullability, no checked exceptions)
 - HTTP: `java.net.http.HttpClient` from the JDK; no OkHttp, no Netty
 - Runtime dependencies: Jackson databind (JSON) and JSpecify (annotations); see [Dependencies](#dependencies)
@@ -34,7 +34,6 @@ MIT-licensed. GaiaDesk itself is proprietary and not covered by this license.
 - [Tokens](#tokens)
 - [Desks, wake and reach](#desks-wake-and-reach)
 - [Audit, webhooks and support sessions](#audit-webhooks-and-support-sessions)
-- [Running as administrator](#running-as-administrator)
 - [End-to-end encryption](#end-to-end-encryption)
 - [Local and LAN](#local-and-lan)
 - [Errors](#errors)
@@ -53,7 +52,7 @@ Gradle (Kotlin DSL):
 
 ```kotlin
 dependencies {
-    implementation("net.gaiadesk:gaiadesk:0.1.1")
+    implementation("net.gaiadesk:gaiadesk:0.1.2")
 }
 ```
 
@@ -63,7 +62,7 @@ Maven:
 <dependency>
   <groupId>net.gaiadesk</groupId>
   <artifactId>gaiadesk</artifactId>
-  <version>0.1.1</version>
+  <version>0.1.2</version>
 </dependency>
 ```
 
@@ -162,7 +161,7 @@ ExecResult r = gd.exec("123456789", "make test", new ExecOptions()
 
 A command that ran is its `ExecResult` whatever its exit code (`getExit()`:
 the command's code, 124 timed out). One that never ran (refused, a `cwd`
-that is not there, an administrator refusal, ...) is the typed exception of
+that is not there, ...) is the typed exception of
 its kind, with the exec's exit code (254 refused).
 `exec(deskId, List.of("ls", "-l"))` sends an argument vector instead of a
 command line (each entry quoted for the shell; `Shell.NONE` runs the program
@@ -243,7 +242,7 @@ owner.revokeToken("123456789", "ci");
 Defaults: 7 days, scopes `exec`, `cp`, `jobs`. If a later desk fails, the
 exception's `getJson()` carries the tokens already minted (`tokens`): their
 secrets are shown once. Scopes: `exec`, `shell`, `cp`, `forward`, `jobs`,
-`screen`, and `admin` (see below), never implied.
+`screen`.
 
 ## Desks, wake and reach
 
@@ -284,30 +283,11 @@ every page lazily, newest first: each next page ends where the last one did
 repeated at a page boundary. `reach` and `supportSessions` take a `limit`
 (1000 and 200 at most).
 
-## Running as administrator
+## Administrator work
 
-```java
-ExecResult r = gd.exec("123456789", "launchctl list", new ExecOptions().admin(true));
-```
-
-`admin(true)` runs the command as **administrator** (root on macOS and
-Linux, SYSTEM on Windows) in the desk's privileged GaiaDesk process. It needs
-both:
-
-1. a desk token minted with the **`admin` scope** (`Scopes.ADMIN`, never
-   implied; a confined token, `cwd` or `lowPriv`, cannot have it, and the SDK
-   refuses that combination with a `UsageException`), and
-2. the desk owner's **Admin access** switch, turned on only at the desk with
-   the computer's administrator password. No API call can turn it on. In its
-   default mode the person at the desk is asked each time.
-
-A refusal is a `RefusedException` (exit 254) with `getReason()` one of
-`admin_scope_missing`, `admin_not_enabled`, `admin_denied` (said no, no
-answer, nobody signed in, a confined token) or `admin_unavailable` (no
-privileged process, or a desk too old for it: never run as the user
-instead); constants in `Reasons`. In a stream, the exit is 254 with that
-reason in `getError()`. Windows Smart App Control / WDAC may still refuse an
-unsigned program (`blocked_by_os_policy`).
+Administrator work (root / SYSTEM) is only available through
+`gaiadesk-cli exec --admin`, not the API: the API refuses it with
+`admin_not_via_api` (a `RefusedException`; `Reasons.ADMIN_NOT_VIA_API`).
 
 ## End-to-end encryption
 
@@ -547,10 +527,10 @@ suspend fun test(desk: String) {
 }
 
 try {
-    gd.exec("123456789", "deploy", ExecOptions().admin(true))
+    gd.exec("123456789", "deploy")
 } catch (e: RefusedException) {
     when (e.reason) {
-        Reasons.ADMIN_NOT_ENABLED -> println("turn on Admin access at the desk")
+        Reasons.RATE_LIMITED -> println("try again in ${e.retryAfter} s")
         else -> throw e
     }
 }

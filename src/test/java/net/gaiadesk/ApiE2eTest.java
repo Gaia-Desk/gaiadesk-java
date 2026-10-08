@@ -159,8 +159,8 @@ class ApiE2eTest {
         assertEquals("ran: echo " + CANARY + " é\nenv: K=" + CANARY + "\n|warn\n|0|", r);
         String lost = same(g -> drainShape(g.execStream(SEALED, "lose").collect()));
         assertTrue(lost.contains("connection_lost"));
-        String admin = same(g -> drainShape(g.execStream(SEALED, "whoami", new ExecOptions().admin(true)).collect()));
-        assertTrue(admin.contains("admin_not_enabled"), admin);
+        String admin = same(g -> drainShape(g.execStream(SEALED, "as-admin").collect()));
+        assertTrue(admin.contains("admin_not_via_api"), admin);
     }
 
     @Test
@@ -188,8 +188,8 @@ class ApiE2eTest {
         assertTrue(w.message.contains("no job named \"held-gone\""));
         assertEquals("no job named \"missing\"", sameError(g -> g.jobLogs(SEALED, "missing")).message);
         assertTrue(same(g -> drainShape(g.followJobLogs(SEALED, "missing").collect())).contains("no job named"));
-        RefusedException admin = assertThrows(RefusedException.class, () -> sealedGd.exec(SEALED, "id", new ExecOptions().admin(true)));
-        assertEquals(Reasons.ADMIN_NOT_ENABLED, admin.getReason());
+        RefusedException admin = assertThrows(RefusedException.class, () -> sealedGd.exec(SEALED, "as-admin"));
+        assertEquals(Reasons.ADMIN_NOT_VIA_API, admin.getReason());
     }
 
     @Test

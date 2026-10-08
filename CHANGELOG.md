@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.1.1 (unreleased)
+## 0.1.2 (unreleased)
+
+- **Breaking: administrator work is not available over any API.** The hosted
+  API and a desk's local API and LAN gateway refuse it: an exec asking for it
+  is refused before anything runs (exit 254), a token with the `admin` scope
+  cannot be minted (403). Removed: `ExecOptions.admin(boolean)`,
+  `Scopes.ADMIN`, and the reasons `Reasons.ADMIN_SCOPE_MISSING`,
+  `ADMIN_NOT_ENABLED`, `ADMIN_DENIED` and `ADMIN_UNAVAILABLE` (with the
+  `UsageException` for an `admin` token confined by `cwd`/`lowPriv`). Added
+  `Reasons.ADMIN_NOT_VIA_API` (`admin_not_via_api`), a `RefusedException`.
+  Run administrator work (root / SYSTEM) with `gaiadesk-cli exec --admin`.
+- End-to-end encryption works on Java 11: X25519 keys are given to the JDK as
+  raw key specs (`XECPrivateKeySpec`/`XECPublicKeySpec`); Java 11's XDH
+  KeyFactory refused the RFC 8410 PKCS#8 encoding ("key length must be 32").
+
+## 0.1.1
 
 - Never hang on a dropped or stalled connection. `Timeouts` (`.timeouts(...)`
   on every builder: hosted API, local, LAN): `responseTimeout` (default 16
@@ -37,9 +52,6 @@
   keep-alive connection that closes reaches the server exactly once.
 - A stream ended by a transport error reports its class's kind in
   `Exit.getError()` (`connection_lost`, reason `timeout`, for an idle timeout).
-- End-to-end encryption works on Java 11: X25519 keys are given to the JDK as
-  raw key specs (`XECPrivateKeySpec`/`XECPublicKeySpec`); Java 11's XDH
-  KeyFactory refused the RFC 8410 PKCS#8 encoding ("key length must be 32").
 - Proven on a raw-socket test server: closed or reset before any response
   byte (with and without reading a 4 MiB upload), stalled mid-body, mid-JSON
   and mid-stream, silent, and 300 dropped requests in a row.

@@ -24,7 +24,7 @@ public final class ExecError extends ModelObject {
         return message;
     }
 
-    /** The finer cause ({@code offline}, {@code timeout}, {@code admin_denied}, ...). */
+    /** The finer cause ({@code offline}, {@code timeout}, {@code no_such_cwd}, ...). */
     public @Nullable String getReason() {
         return reason;
     }

@@ -15,7 +15,6 @@ public final class ExecOptions extends CallOptions<ExecOptions> {
     @Nullable String stdin;
     @Nullable Map<String, String> env;
     boolean check;
-    boolean admin;
 
     /** Options with nothing set: the desk's default shell, no stdin, 15 minutes at most. */
     public ExecOptions() {}
@@ -79,18 +78,6 @@ public final class ExecOptions extends CallOptions<ExecOptions> {
     /** {@code exec} only: a non-zero exit (or a timeout) is a {@link CommandException}. */
     public ExecOptions check(boolean check) {
         this.check = check;
-        return this;
-    }
-
-    /**
-     * Run it as administrator (root on macOS and Linux, SYSTEM on Windows) in the desk's privileged GaiaDesk
-     * process. Needs a desk token with the {@code admin} scope and the desk owner's Admin access (turned on at the
-     * desk only); otherwise refused with reason {@code admin_scope_missing}, {@code admin_not_enabled},
-     * {@code admin_denied} or {@code admin_unavailable} (a {@link RefusedException} from {@code exec}, an exit
-     * 254 from a stream). Never run as the desk's user instead.
-     */
-    public ExecOptions admin(boolean admin) {
-        this.admin = admin;
         return this;
     }
 }

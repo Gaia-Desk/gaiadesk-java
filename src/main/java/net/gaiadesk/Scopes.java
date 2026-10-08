@@ -18,12 +18,6 @@ public final class Scopes {
     public static final String JOBS = "jobs";
     /** The screen (Agent Access). */
     public static final String SCREEN = "screen";
-    /**
-     * Ask to run as administrator (root / SYSTEM, {@link ExecOptions#admin(boolean)}). Never implied: name it.
-     * The desk owner's Admin access switch, turned on at the desk, still decides; a confined token
-     * ({@code cwd}, {@code lowPriv}) cannot have it.
-     */
-    public static final String ADMIN = "admin";
 
     /** The default when none are given: exec, cp, jobs. */
     public static final List<String> DEFAULT = Collections.unmodifiableList(Arrays.asList(EXEC, CP, JOBS));

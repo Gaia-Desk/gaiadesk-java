@@ -158,9 +158,6 @@ class ApiTransportTest {
         GaiaDesk owner = person();
         assertEquals("gdagt_minted_secret", owner.createToken(new TokenSpec(OK).name("bot").expires("24h").cwd("/srv").lowPriv(true)).getTokens().get(0).getSecret());
         assertEquals(Json.parse("{\"name\":\"bot\",\"expires_secs\":86400,\"scopes\":[\"exec\",\"cp\",\"jobs\"],\"cwd\":\"/srv\",\"low_priv\":true}"), last().json());
-        owner.createToken(new TokenSpec(OK).name("root-bot").scopes(Scopes.EXEC, Scopes.ADMIN));
-        assertEquals(Json.parse("[\"exec\",\"admin\"]"), last().json().get("scopes"), "admin is named, never implied");
-        fails(UsageException.class, () -> owner.createToken(new TokenSpec(OK).name("x").scopes(Scopes.ADMIN).cwd("/srv")));
         fails(UsageException.class, () -> owner.createToken(new TokenSpec(OK)));
         assertEquals("9f3a1c2b7d004e11", owner.revokeToken(OK, "9f3a1c2b7d004e11").getRevoked());
         assertEquals("/v1/desks/" + OK + "/tokens/9f3a1c2b7d004e11", last().path);
@@ -245,21 +242,33 @@ class ApiTransportTest {
     }
 
     @Test
-    void execThatNeverRanIsItsTypedErrorAndAdminRefusalsKeepTheirReason() {
+    void execThatNeverRanIsItsTypedError() {
         GaiaDesk g = gd();
         OperationFailedException never = fails(OperationFailedException.class, () -> g.exec(OK, "unreachable-cwd"));
         assertEquals("no_such_cwd", never.getReason());
         assertEquals(Integer.valueOf(255), never.getExitCode());
-        RefusedException admin = fails(RefusedException.class, () -> g.exec(OK, "whoami", new ExecOptions().admin(true)));
-        assertEquals(Reasons.ADMIN_NOT_ENABLED, admin.getReason());
-        assertEquals(Integer.valueOf(254), admin.getExitCode());
-        assertTrue(last().json().get("admin").asBoolean(), "admin: true is in the ExecSpec");
         assertEquals(3, g.exec(OK, "fail").getExit(), "a non-zero exit is a result");
         CommandException c = fails(CommandException.class, () -> g.exec(OK, "fail", new ExecOptions().check(true)));
         assertEquals(3, c.getResult().getExit());
-        Exit refusedStream = g.execStream(OK, "whoami", new ExecOptions().admin(true)).exit();
-        assertEquals(Integer.valueOf(254), refusedStream.getExitCode());
-        assertEquals(Reasons.ADMIN_NOT_ENABLED, refusedStream.getError().getReason());
+    }
+
+    @Test
+    void administratorWorkRefusedByTheApiIsARefusalWithAdminNotViaApi() {
+        GaiaDesk g = gd();
+        RefusedException exec = fails(RefusedException.class, () -> g.exec(OK, "as-admin"));
+        assertEquals("refused", exec.getKind());
+        assertEquals(Reasons.ADMIN_NOT_VIA_API, exec.getReason());
+        assertEquals(Integer.valueOf(254), exec.getExitCode());
+        assertFalse(last().json().has("admin"), "the SDK never asks for administrator work");
+        Exit stream = g.execStream(OK, "as-admin").exit();
+        assertEquals(Integer.valueOf(254), stream.getExitCode());
+        assertEquals("refused", stream.getError().getKind());
+        assertEquals(Reasons.ADMIN_NOT_VIA_API, stream.getError().getReason());
+        RefusedException mint = fails(RefusedException.class, () -> person().createToken(new TokenSpec(OK).name("admin-bot")));
+        assertEquals(Integer.valueOf(403), mint.getStatus());
+        assertEquals("refused", mint.getKind());
+        assertEquals(Reasons.ADMIN_NOT_VIA_API, mint.getReason());
+        assertEquals(Integer.valueOf(254), mint.getExitCode());
     }
 
     @Test

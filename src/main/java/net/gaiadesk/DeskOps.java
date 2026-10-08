@@ -85,7 +85,6 @@ final class DeskOps {
         if (o.cwd != null) spec.put("cwd", o.cwd);
         if (o.timeoutSecs != null) spec.put("timeout_secs", o.timeoutSecs);
         if (o.stdin != null) spec.put("stdin", o.stdin);
-        if (o.admin) spec.put("admin", true);
         return spec;
     }
 
@@ -111,7 +110,7 @@ final class DeskOps {
         ExecResult result = Json.convert(norm, ExecResult.class);
         boolean noCode = !json.path("remote_code").isNumber();
         if (noCode && !result.isTimedOut() && error != null) {
-            // It never ran (unreachable, refused, a cwd that is not there, admin refused, ...): the error, typed by its kind.
+            // It never ran (unreachable, refused, a cwd that is not there, ...): the error, typed by its kind.
             String kind = error.get("kind").asText();
             String reason = Json.text(error, "reason");
             String msg = error.get("message").asText();
@@ -425,9 +424,6 @@ final class DeskOps {
         if (spec.desks.isEmpty()) throw Check.usage("at least one desk is required");
         if (spec.name == null) throw Check.usage("createToken needs a name over the " + core.transport.label() + " transport");
         List<String> scopes = spec.scopes != null ? spec.scopes : Scopes.DEFAULT;
-        if (scopes.contains(Scopes.ADMIN) && (spec.cwd != null || spec.lowPriv)) {
-            throw Check.usage("a token with the admin scope cannot be confined (cwd, lowPriv): a confined token never runs as administrator");
-        }
         ObjectNode body = Json.object();
         body.put("name", spec.name);
         body.put("expires_secs", spec.expiresSecs);

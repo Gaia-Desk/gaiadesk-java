@@ -72,7 +72,7 @@ public final class ErrorDetails {
         public Builder exitCode(@Nullable Integer v) { exitCode = v; return this; }
         /** The SDK kind ({@code usage}, {@code offline}, {@code refused}, ...). */
         public Builder kind(@Nullable String v) { kind = v; return this; }
-        /** The finer cause ({@code offline}, {@code rate_limited}, {@code admin_denied}, ...). */
+        /** The finer cause ({@code offline}, {@code rate_limited}, {@code desk_busy}, ...). */
         public Builder reason(@Nullable String v) { reason = v; return this; }
         /** The desk the error concerned. */
         public Builder desk(@Nullable String v) { desk = v; return this; }

@@ -53,7 +53,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class GaiaDesk {
     /** This SDK's version. */
-    public static final String VERSION = "0.1.1";
+    public static final String VERSION = "0.1.2";
     /** The hosted API. */
     public static final String DEFAULT_API_URL = "https://api.gaiadesk.net/v1";
     /** The most one file may be through the API (256 MB). */
@@ -161,7 +161,7 @@ public final class GaiaDesk {
     /**
      * {@code POST /desks/{id}/exec}: run one command line. A command that ran is its result whatever its exit
      * code ({@link ExecOptions#check(boolean)} makes a non-zero exit a {@link CommandException}); one that never
-     * ran (refused, unreachable, an {@code admin} refusal, ...) is the typed error.
+     * ran (refused, unreachable, ...) is the typed error.
      */
     public ExecResult exec(String deskId, String command, @Nullable ExecOptions o) {
         return desk.exec(deskId, command, o);

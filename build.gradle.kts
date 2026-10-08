@@ -18,7 +18,7 @@ plugins {
 }
 
 group = "net.gaiadesk"
-version = "0.1.1"
+version = "0.1.2"
 description = "The GaiaDesk SDK for Java and Kotlin: drive GaiaDesk desks through the hosted GaiaDesk API, a desk's local API or its LAN gateway."
 
 java {
