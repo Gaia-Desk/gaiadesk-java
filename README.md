@@ -1,10 +1,17 @@
 # GaiaDesk SDK for Java and Kotlin
 
-Drive your GaiaDesk machines ("desks") from Java and Kotlin through the hosted
-GaiaDesk API: list them and see why one is offline, wake them, run commands and
-get exit codes back, stream output, copy files, run background jobs, read
-stats, mint and revoke scoped agent tokens, read the audit trail, manage
-webhooks and create support sessions. Desk operations are
+[![CI](https://github.com/Gaia-Desk/gaiadesk-java/actions/workflows/ci.yml/badge.svg)](https://github.com/Gaia-Desk/gaiadesk-java/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/Gaia-Desk/gaiadesk-java)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/Gaia-Desk/gaiadesk-java)](https://github.com/Gaia-Desk/gaiadesk-java/releases/latest)
+
+The official Java and Kotlin SDK (client library) for the
+[GaiaDesk](https://gaiadesk.net) remote desktop Platform API, for remote access
+automation from JVM services, CI and AI agents. Drive your GaiaDesk machines
+("desks") through the hosted GaiaDesk API: list them and see why one is
+offline, wake them, run commands on remote computers and get exit codes back,
+stream output, transfer files, run background jobs, read stats, mint and
+revoke scoped agent tokens, read the audit trail, manage webhooks and create
+support sessions. Desk operations are
 [end-to-end encrypted](#end-to-end-encryption) whenever the desk can open them.
 The same client also speaks to a desk's own [local API and LAN gateway](#local-and-lan).
 
@@ -13,7 +20,7 @@ The same client also speaks to a desk's own [local API and LAN gateway](#local-a
 - HTTP: `java.net.http.HttpClient` from the JDK; no OkHttp, no Netty
 - Runtime dependencies: Jackson databind (JSON) and JSpecify (annotations); see [Dependencies](#dependencies)
 
-Other GaiaDesk developer tools: the
+Other GaiaDesk developer tools (all of them under [Links](#links)): the
 [TypeScript SDK](https://github.com/Gaia-Desk/gaiadesk-typescript),
 the [Python SDK](https://github.com/Gaia-Desk/gaiadesk-python) and the
 [MCP server](https://github.com/Gaia-Desk/gaiadesk-mcp).
@@ -43,11 +50,26 @@ MIT-licensed. GaiaDesk itself is proprietary and not covered by this license.
 - [Dependencies](#dependencies)
 - [Not available here](#not-available-here)
 - [Development](#development)
+- [Links](#links)
 
 ---
 
 ## Install
 
+The library is not on Maven Central yet. Build it from a release tag and
+install it into your local Maven repository (`~/.m2`); Gradle needs JDK 17 or
+newer to run, and the library itself targets Java 11:
+
+```sh
+git clone --branch v0.1.2 https://github.com/Gaia-Desk/gaiadesk-java
+cd gaiadesk-java
+./gradlew publishToMavenLocal
+```
+
+Then depend on it as below; in Gradle, add `mavenLocal()` to `repositories`
+(Maven reads `~/.m2` by default).
+
+Once published to Maven Central, the same coordinates resolve from there.
 Gradle (Kotlin DSL):
 
 ```kotlin
@@ -596,3 +618,21 @@ the Central Portal's OSSRH-compatible staging endpoint:
 then release the staged deployment in the Central Portal.
 `./gradlew publishMavenPublicationToStagingRepository` writes what would be
 published to `build/staging-repo` without signing or uploading.
+
+## Links
+
+- Package: `net.gaiadesk:gaiadesk` on Maven Central once published; until
+  then, build it from this repository's [release tags](https://github.com/Gaia-Desk/gaiadesk-java/tags)
+- Documentation: [Getting started](https://gaiadesk.net/docs/getting-started),
+  [The CLI for scripts and AI agents](https://gaiadesk.net/docs/cli-for-agents),
+  [Agent access](https://gaiadesk.net/docs/agent-access),
+  [Embedding GaiaDesk](https://gaiadesk.net/docs/embedding-gaiadesk) (support sessions),
+  [Security](https://gaiadesk.net/docs/security)
+- GaiaDesk SDKs: [TypeScript](https://github.com/Gaia-Desk/gaiadesk-typescript), [Python](https://github.com/Gaia-Desk/gaiadesk-python),
+  [Go](https://github.com/Gaia-Desk/gaiadesk-go), Java and Kotlin (this one),
+  [.NET](https://github.com/Gaia-Desk/gaiadesk-dotnet), [Ruby](https://github.com/Gaia-Desk/gaiadesk-ruby),
+  [PHP](https://github.com/Gaia-Desk/gaiadesk-php), [Rust](https://github.com/Gaia-Desk/gaiadesk-rust);
+  the [MCP server](https://github.com/Gaia-Desk/gaiadesk-mcp) for AI assistants; the
+  [command line](https://github.com/Gaia-Desk/gaiadesk-cli), `gaiadesk-cli`
+- [Changelog](CHANGELOG.md) and [releases](https://github.com/Gaia-Desk/gaiadesk-java/releases)
+- [Security policy](https://github.com/Gaia-Desk/gaiadesk-java/security/policy)
