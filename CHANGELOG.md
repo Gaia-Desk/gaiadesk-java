@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.2 (unreleased)
+## 0.1.2
 
 - **Breaking: administrator work is not available over any API.** The hosted
   API and a desk's local API and LAN gateway refuse it: an exec asking for it
